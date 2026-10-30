@@ -1,0 +1,15 @@
+# Generated build outputs
+build/
+build_hls/
+.Xil/
+.theia/
+logs/
+
+# Generated Vitis HLS project outputs
+test/ground_segmentation_hls/ground_segmentation_hls/
+
+# Temporary IDE and compiler files
+compile_commands.json
+xcd.log
+*.o
+*.exe

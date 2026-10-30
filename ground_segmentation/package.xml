@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ground_segmentation</name>
+  <version>1.0.0</version>
+  <description>A C++ library for ground_segmentation of pointcloud</description>
+  <maintainer email="haider_khan.lodhi@dfki.de">haider8645</maintainer>
+  <license>BSD 3-Clause</license>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <depend>libpcl-all-dev</depend>
+  <depend>eigen</depend>
+  <depend>nanoflann</depend>
+
+  <test_depend>gtest</test_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>

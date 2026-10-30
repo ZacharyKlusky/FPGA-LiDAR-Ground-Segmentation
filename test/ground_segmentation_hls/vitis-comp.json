@@ -1,0 +1,12 @@
+{
+  "name": "ground_segmentation_hls",
+  "type": "HLS",
+  "configuration": {
+    "componentType": "HLS",
+    "configFiles": [
+      "hls_config.cfg"
+    ],
+    "work_dir": "ground_segmentation_hls"
+  },
+  "previousBuildStatusMap": {}
+}
