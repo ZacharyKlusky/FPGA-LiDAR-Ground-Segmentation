@@ -1,107 +1,158 @@
 # FPGA-Based LiDAR Ground Segmentation
 
+**EECE 5698 — FPGA in the Cloud**  
+**Team:** Zachary Klusky and Kevin Kuzmeski  
+**Target:** AMD Alveo U280, Vitis HLS  
+**Project Update 2:** November 24, 2026
+
 ## Project Overview
 
-This project investigates the acceleration of LiDAR ground segmentation using FPGA hardware and Vitis HLS. LiDAR point clouds consist of three-dimensional coordinates representing the surrounding environment. Ground segmentation separates points belonging to the ground from those representing objects such as vegetation, buildings, and other obstacles.
+This project investigates the acceleration of LiDAR ground segmentation using FPGA hardware and Vitis HLS. LiDAR point clouds contain three-dimensional coordinates representing the environment. Ground segmentation separates ground returns from vegetation, buildings, and other obstacles. Our goal is to establish a correct C++ baseline, adapt suitable operations for FPGA implementation, and compare correctness, execution time, and hardware resource utilization.
 
-Our goal is to implement a grid-based ground-segmentation pipeline and evaluate the potential performance improvements achieved through FPGA acceleration compared with a software implementation.
+We initially explored the open-source [DFKI-RIC ground segmentation](https://github.com/dfki-ric/ground_segmentation) software as a reference. Our custom implementations are separate from that repository. The current minimum-height classifier is a simplified baseline, **not** a complete implementation of GSeg3D, LineFit, or RANSAC.
 
-For Project Update 1, we focused on establishing the software reference implementation and developing the initial grid-processing stage for FPGA acceleration.
+## Project Update 1 — Initial Grid Processing (October 29, 2026)
 
-## Project Update 1: Completed Work
+The first implementation, `ground_accel`, performs **3D voxel grouping**, not ground/non-ground classification:
 
-We cloned and built the open-source ground-segmentation repository from DFKI-RIC, which provides the software reference for our project.
+1. Accept arrays of 3D LiDAR coordinates.
+2. Assign points to spatial grid cells using configurable dimensions.
+3. Count points in occupied cells.
+4. Calculate offsets into grouped point indices.
+5. Organize point indices by their assigned cells.
 
-We also developed an initial C++ accelerator function, `ground_accel`, intended for Vitis HLS. This implementation currently performs the following operations:
+The kernel supports up to **4,096 points per invocation**. Its standalone five-point C++ testbench passed with three occupied cells and the following expected outputs:
 
-1. Accepts arrays of 3D LiDAR point coordinates.
-2. Assigns points to spatial grid cells using configurable cell dimensions.
-3. Identifies occupied cells and counts the points in each cell.
-4. Calculates offsets identifying each cell's range of points.
-5. Organizes point indices by their assigned cells.
+| Output | Expected value |
+|---|---|
+| Occupied cells | `3` |
+| Point counts | `[3, 1, 1]` |
+| Offsets | `[0, 3, 4, 5]` |
+| Grouped indices | `[0, 1, 4, 2, 3]` |
 
-The current implementation supports up to 4,096 points per invocation.
-
-We created a standalone C++ testbench containing five predefined points and expected results. The testbench successfully compiled and passed on October 29, 2026.
-
-This verifies the grid-processing functionality for the provided test case. Full ground classification and FPGA synthesis remain future work.
-
-## Submitted Files
-
-- `ground_segmentation/` — Original DFKI-RIC ground-segmentation repository.
-- `test/src/ground_accel.cpp` — HLS-oriented grid-processing implementation.
-- `test/testbench/ground_accel_test.cpp` — Testbench containing sample input and expected output.
-- `test/ground_segmentation_hls/hls_config.cfg` — Vitis HLS configuration.
-- `README.md` — Project documentation and instructions.
-
-## Running the Grid-Processing Implementation
-
-**Requirements:** Linux environment with a C++17-compatible `g++` compiler.
-
-From the `Ground_Segmentation` project directory, run:
+Run from the repository root:
 
 ```bash
-g++ -std=c++17 -O2 \
-  test/src/ground_accel.cpp \
-  test/testbench/ground_accel_test.cpp \
+g++ -std=c++17 -O2 -Wno-unknown-pragmas \
+  test/src/ground_accel.cpp test/testbench/ground_accel_test.cpp \
   -o ground_accel_test -lm
-
 ./ground_accel_test
 ```
 
-**Expected output:**
+Expected message: `PASS: grouping, offsets, and point indices verified`.
 
-```text
-PASS: grouping, offsets, and point indices verified
+**Historical status clarification:** At the time of the first README, HLS synthesis had not been verified. Subsequently, HLS synthesis artifacts were produced for the **original voxel-grouping kernel**. This is not evidence that the new classification kernel was synthesized or executed on hardware.
+
+## Project Update 2 — Ground Classification Baseline (November 24, 2026)
+
+### Progress Since Project Update 1
+
+We implemented a new XY-grid ground-classification kernel (`ground_classify`), added deterministic correctness tests, measured preliminary CPU execution times, and documented a failure case. The original 3D grouping kernel and the new classifier are **separate implementations**, not yet an integrated FPGA-executed pipeline.
+
+### Input Data and Output Format
+
+The classifier takes arrays of `float` coordinates (`x`, `y`, `z`), `num_points`, an XY `cell_size`, and a `height_threshold`. It returns one `unsigned char` label per point: **`1` = ground; `0` = obstacle/non-ground**. Maximum input size is 4,096 points. Current classification experiments use **deterministic synthetic data**, not a public LiDAR dataset. Real-data evaluation remains outstanding.
+
+### Ground-Classification Algorithm
+
+Source: `test/src/ground_classify.cpp`.
+
+1. Divide the XY plane into square cells of width `cell_size` (including negative coordinates using `floor`).
+2. Assign each point to a cell, maintaining the minimum Z coordinate in that cell.
+3. Label a point as ground when `z_point - min_z_in_cell <= height_threshold`; otherwise label it as an obstacle.
+
+The kernel uses fixed-size arrays and a sequential search of occupied cells. This can require **O(n²)** work in the worst case. It assumes the minimum-height return in each cell is representative of ground, which is not always true.
+
+### HLS Architecture
+
+The new kernel declares separate `m_axi` memory interfaces for X, Y, Z, and output labels, and `s_axilite` control interfaces for the point count, cell size, height threshold, and return/control. These pragmas describe the intended hardware interface; they **do not** demonstrate successful synthesis, timing closure, or hardware execution. No measured FPGA acceleration is claimed.
+
+### Functional Correctness and Golden Outputs
+
+- `test/testbench/ground_classify_test.cpp`: **9/9** predefined labels matched expected output on a small synthetic point cloud.
+- `test/testbench/ground_accel_test.cpp`: original five-point grouping test passed.
+- These are **CPU C++ tests**. FPGA C simulation, co-simulation, and physical execution are distinct validation milestones.
+
+### Synthetic Benchmark Results
+
+Benchmark source: `test/testbench/ground_classify_benchmark.cpp`. Executed on CloudLab `pc155`, compiled with `g++ -std=c++17 -O2`.
+
+| Input points | Accuracy on synthetic data | Predicted ground | Predicted obstacles | Single-run CPU time |
+|---:|---:|---:|---:|---:|
+| 100 | 100.000% | 75 | 25 | 0.022 ms |
+| 1,000 | 100.000% | 750 | 250 | 0.107 ms |
+| 4,096 | 100.000% | 3,072 | 1,024 | 1.356 ms |
+
+The synthetic benchmark constructs four points per XY cell: three low points designated ground and one elevated point designated obstacle. **These results do not establish accuracy on real LiDAR data.** Timings are one-shot CPU measurements, not median timings or FPGA latency; additional repetitions are needed for reliable performance comparisons.
+
+### Known Limitation — Obstacle-Only Cell
+
+Source: `test/testbench/ground_classify_edge_test.cpp`.
+
+Three elevated points (Z = 1.5, 1.6, 1.7) were placed in one cell with **no ground returns**. All three should be obstacles, but the classifier labeled **3/3 as ground**. The test printed `PASS: Known limitation reproduced` because it deliberately verified this failure behavior—not because the predictions were correct. This motivates using neighboring cells, slope estimates, or more robust ground models.
+
+### Reproducing the CPU Tests
+
+From the repository root:
+
+```bash
+mkdir -p build_u280
+
+g++ -std=c++17 -O2 -Wno-unknown-pragmas \
+  test/src/ground_classify.cpp test/testbench/ground_classify_test.cpp \
+  -o build_u280/ground_classify_test
+./build_u280/ground_classify_test
+
+g++ -std=c++17 -O2 -Wno-unknown-pragmas \
+  test/src/ground_classify.cpp test/testbench/ground_classify_benchmark.cpp \
+  -o build_u280/ground_classify_benchmark
+./build_u280/ground_classify_benchmark
+
+g++ -std=c++17 -O2 -Wno-unknown-pragmas \
+  test/src/ground_classify.cpp test/testbench/ground_classify_edge_test.cpp \
+  -o build_u280/ground_classify_edge_test
+./build_u280/ground_classify_edge_test
 ```
 
-The testbench supplies five points and divides them into three occupied grid cells.
+### FPGA Development Status
 
-Expected results:
+**Target hardware:** AMD Alveo U280. The CloudLab experiment detected a ready U280. The original voxel-grouping kernel has prior Vitis HLS synthesis artifacts, but the new `ground_classify` kernel has **not** been verified through HLS synthesis, emulation, or hardware execution. The expected Vitis 2023.1/2023.2 installations were unavailable at the shared configured path; attempting the available 2024.2 toolchain encountered target-device support problems. The team has requested guidance about the supported build environment.
 
-- Number of occupied cells: `3`
-- Cell point counts: `[3, 1, 1]`
-- Cell offsets: `[0, 3, 4, 5]`
-- Grouped point indices: `[0, 1, 4, 2, 3]`
+**Outstanding:** classification-kernel HLS synthesis, hardware resource and timing reports, software/hardware emulation, U280 execution, and matched CPU-versus-FPGA comparisons. No FPGA speedup or hardware accuracy is reported.
 
-The testbench compares the computed results against these expected values and returns a nonzero exit code if a verification check fails.
+### Design-Space Exploration and Next Steps
 
-## Current Status and Future Work
+The current measured baseline uses `cell_size = 1.0` and `height_threshold = 0.3` in the synthetic benchmark. A controlled parameter sweep has **not** yet been performed. Planned exploration includes different cell sizes and thresholds; testing sparse and sloped terrain; comparing linear cell search with more hardware-friendly indexing; loop pipelining and memory optimization; real-world LiDAR datasets; HLS resource/latency reports; and hardware acceleration once the toolchain is available. This list is a plan, **not completed experimental evidence**.
 
-The grid-processing implementation passes its standalone C++ testbench. Successful Vitis HLS C simulation and synthesis have not yet been demonstrated.
+### Team Contributions
 
-The remaining stages include:
+This is a two-person project. Zachary Klusky worked on the new XY-grid ground-classification baseline, deterministic CPU tests, synthetic benchmarks, obstacle-only failure analysis, and Project Update 2 documentation/toolchain investigation. **Kevin Kuzmeski's exact contributions and the ownership of the original grouping/HLS work must be confirmed with Kevin before final submission.** This placeholder avoids attributing unverified work.
 
-1. Per-cell statistics and principal component analysis (PCA).
-2. Plane fitting and slope estimation.
-3. Ground-region expansion.
-4. End-to-end ground-segmentation validation.
-5. HLS optimization and evaluation of latency, throughput, and FPGA resource utilization.
+### References and Software Attribution
 
-The objective of Project Update 1 is to establish a reproducible starting point for these subsequent development stages.
+- [DFKI-RIC ground_segmentation](https://github.com/dfki-ric/ground_segmentation) — open-source reference implementation, included in the `ground_segmentation/` directory.
+- [AMD Vitis HLS documentation](https://docs.amd.com/r/en-US/ug1399-vitis-hls) — HLS interface and optimization concepts.
+
+The project's `test/src/ground_accel.cpp` and `test/src/ground_classify.cpp` are distinct custom kernels; the current classifier does not reproduce the complete DFKI-RIC algorithm. Other reused code or dependencies should be credited explicitly as identified.
+
+### AI-Assisted Development Disclosure
+
+AI assisted with C++ kernel development, debugging, FPGA toolchain troubleshooting, and documentation. All stated test results and CPU timings are taken from observed terminal output, not AI-estimated performance. Independent FPGA synthesis and hardware validation remain outstanding.
 
 ---
 
-## Software Reference Implementation: Setup and Build Instructions
+## Original Software Reference — Setup and Build
 
-The original software reference implementation is based on the following open-source repository:
+The reference repository is located in `ground_segmentation/`: https://github.com/dfki-ric/ground_segmentation
 
-https://github.com/dfki-ric/ground_segmentation
-
-The repository was cloned into the `ground_segmentation/` directory.
-
-### Dependencies
-
-On Ubuntu, install the required packages:
+On Ubuntu, install the required dependencies:
 
 ```bash
 sudo apt update
 sudo apt install cmake libpcl-dev libeigen3-dev libgtest-dev libnanoflann-dev
 ```
 
-### Building the Reference Implementation
-
-From the `Ground_Segmentation` project directory:
+Build from the repository root:
 
 ```bash
 cd ground_segmentation
@@ -109,16 +160,19 @@ cd ground_segmentation
 /usr/bin/cmake --build build -j"$(nproc)"
 ```
 
-The explicit `/usr/bin/cmake` path selects the system CMake installation rather than a version bundled with Vitis.
+The explicit `/usr/bin/cmake` uses the system CMake rather than a Vitis-bundled version. The original reference implementation and the custom HLS-oriented kernels are built separately. The HLS configuration in `test/ground_segmentation_hls/` may contain machine-specific absolute paths that need adjustment for another environment.
 
-These commands build the original software implementation. The separate grid-processing accelerator and its testbench can be compiled and executed using the instructions earlier in this README.
+## Repository Layout
 
-### HLS Development Status
+| Path | Purpose |
+|---|---|
+| `ground_segmentation/` | External DFKI-RIC reference code |
+| `test/src/ground_accel.cpp` | Original 3D voxel grouping kernel |
+| `test/testbench/ground_accel_test.cpp` | Original grouping correctness test |
+| `test/src/ground_classify.cpp` | New XY-grid classification kernel |
+| `test/testbench/ground_classify_test.cpp` | Classification correctness test |
+| `test/testbench/ground_classify_benchmark.cpp` | Synthetic accuracy/CPU benchmark |
+| `test/testbench/ground_classify_edge_test.cpp` | Known failure-case demonstration |
+| `test/ground_segmentation_hls/` | Existing HLS project/configuration and artifacts |
 
-The initial grid-processing accelerator has been written in C++ with Vitis HLS interface directives.
-
-Standalone C++ testing has passed. HLS C simulation and synthesis are not yet verified.
-
-The project is being developed using Vitis 2023.2, targeting the AMD Alveo U280 FPGA.
-
-The HLS configuration currently contains absolute source paths specific to the development environment. These paths must be updated for a different installation before running the HLS tool flow.
+**Status as of November 24, 2026:** CPU baseline validated on synthetic tests; classification FPGA execution remains unverified. Future results should be appended with dates and corresponding Git commits.
