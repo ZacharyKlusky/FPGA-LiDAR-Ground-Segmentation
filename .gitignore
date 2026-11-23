@@ -13,3 +13,8 @@ compile_commands.json
 xcd.log
 *.o
 *.exe
+
+# Generated FPGA compilation artifacts
+build_u280/
+_x/
+v++_*.log
