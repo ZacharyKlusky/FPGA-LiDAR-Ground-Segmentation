@@ -120,6 +120,55 @@ g++ -std=c++17 -O2 -Wno-unknown-pragmas \
 
 **Outstanding:** classification-kernel HLS synthesis, hardware resource and timing reports, software/hardware emulation, U280 execution, and matched CPU-versus-FPGA comparisons. No FPGA speedup or hardware accuracy is reported.
 
+### Algorithm-Level Design-Space Exploration
+
+A parameter sweep was conducted to evaluate the effect of XY cell size and height threshold on classification accuracy and CPU execution time.
+
+The experiment uses a fixed synthetic dataset containing 4,096 points, including 3,072 ground points and 1,024 obstacle points. The scene includes sloped terrain and obstacles at varying heights.
+
+Four cell sizes (0.25, 0.5, 1.0, and 2.0 m) and four height thresholds (0.1, 0.2, 0.3, and 0.5 m) were evaluated, producing 16 configurations. Each configuration was executed 20 times, and the median CPU execution time was recorded.
+
+#### Representative Results
+
+| Cell Size (m) | Threshold (m) | Accuracy (%) | False Ground | False Obstacle | Median CPU (ms) |
+|---:|---:|---:|---:|---:|---:|
+| 0.25 | 0.10 | 100.000 | 0 | 0 | 2.984 |
+| 0.50 | 0.10 | 100.000 | 0 | 0 | 1.696 |
+| 1.00 | 0.10 | 100.000 | 0 | 0 | 0.957 |
+| 1.00 | 0.20 | 100.000 | 0 | 0 | 0.956 |
+| 1.00 | 0.30 | 96.875 | 128 | 0 | 0.956 |
+| 2.00 | 0.10 | 62.500 | 0 | 1536 | 0.287 |
+| 2.00 | 0.30 | 98.438 | 64 | 0 | 0.287 |
+
+The complete results for all 16 configurations are available in [results/ground_classify_sweep.txt](results/ground_classify_sweep.txt).
+
+#### Analysis
+
+- Increasing cell size reduces the number of occupied cells and therefore reduces the computational cost of the sequential cell-search algorithm.
+- At a fixed height threshold of 0.3 m, increasing cell size from 0.25 m to 2.0 m reduced median CPU execution time from 2.856 ms to 0.287 ms, approximately a 9.95x improvement.
+- The fastest configuration achieving 100% classification accuracy used a 1.0 m cell size and a 0.2 m height threshold.
+- A 2.0 m cell size and 0.3 m threshold achieved 98.438% accuracy with a median execution time of 0.287 ms, approximately 3.33x faster than the fastest perfect-accuracy configuration.
+- Excessively large height thresholds can cause obstacles to be incorrectly classified as ground.
+- Large cells combined with small height thresholds can cause legitimate ground points on sloped terrain to be incorrectly classified as obstacles.
+
+These results demonstrate an accuracy-performance trade-off for the current minimum-height classification algorithm. The optimal parameters are specific to this synthetic dataset and require further validation using real-world LiDAR data.
+
+These measurements represent CPU execution only and do not establish FPGA latency, throughput, or acceleration.
+
+#### Reproducing the Parameter Sweep
+
+```bash
+mkdir -p build_u280 results
+
+g++ -std=c++17 -O2 -Wall -Wextra -Wno-unknown-pragmas \
+    test/src/ground_classify.cpp \
+    test/testbench/ground_classify_sweep.cpp \
+    -o build_u280/ground_classify_sweep
+
+./build_u280/ground_classify_sweep \
+    | tee results/ground_classify_sweep.txt
+```
+
 ### Design-Space Exploration and Next Steps
 
 The current measured baseline uses `cell_size = 1.0` and `height_threshold = 0.3` in the synthetic benchmark. A controlled parameter sweep has **not** yet been performed. Planned exploration includes different cell sizes and thresholds; testing sparse and sloped terrain; comparing linear cell search with more hardware-friendly indexing; loop pipelining and memory optimization; real-world LiDAR datasets; HLS resource/latency reports; and hardware acceleration once the toolchain is available. This list is a plan, **not completed experimental evidence**.
