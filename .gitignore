@@ -18,3 +18,5 @@ xcd.log
 build_u280/
 _x/
 v++_*.log
+
+datasets/
