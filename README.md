@@ -169,9 +169,276 @@ g++ -std=c++17 -O2 -Wall -Wextra -Wno-unknown-pragmas \
     | tee results/ground_classify_sweep.txt
 ```
 
+### Real-World Validation — SemanticKITTI
+
+#### Dataset and Evaluation Methodology
+
+The ground-classification kernel was evaluated using an annotated
+SemanticKITTI sample distributed by Supervisely. The sample contains
+ten consecutive LiDAR scans (frames 000000–000009) from sequence 00.
+
+All ten scans passed dataset integrity checks, with matching point
+and semantic-label counts.
+
+| Dataset characteristic | Count |
+|---|---:|
+| LiDAR scans | 10 |
+| Total points | 1,235,429 |
+| Ground points | 625,803 |
+| Non-ground points | 589,636 |
+| Excluded points | 19,990 |
+| Evaluated points | 1,215,439 |
+
+SemanticKITTI point clouds contain four 32-bit floating-point values
+per point: X, Y, Z, and intensity. Semantic class IDs are extracted
+from the lower 16 bits of each 32-bit annotation.
+
+For binary ground classification, the following semantic classes
+are considered ground:
+
+- 40: Road
+- 44: Parking
+- 48: Sidewalk
+- 49: Other-ground
+- 60: Lane marking
+- 72: Terrain
+
+Classes 0 (unlabeled) and 1 (outlier) are excluded from scoring.
+All other observed semantic classes are considered non-ground.
+Excluded points remain available to the classifier during processing,
+preventing ground-truth information from influencing input selection.
+
+#### Spatial Batching
+
+The existing kernel supports a maximum of 4,096 points per invocation.
+To process complete LiDAR scans without modifying the kernel, the CPU
+evaluation program groups points by their XY grid-cell coordinates
+and constructs batches containing complete cells.
+
+This preserves each cell's minimum-height calculation across batch
+boundaries. Configurations containing an individual cell larger than
+the kernel capacity are rejected explicitly.
+
+The evaluation program is implemented in
+`test/testbench/ground_classify_real.cpp`.
+
+#### Real-World Baseline and Parameter Optimization
+
+The original baseline uses a 1.0 m cell size and a 0.3 m height
+threshold. A parameter sweep evaluates four cell sizes
+(0.25, 0.5, 1.0, and 2.0 m) and four height thresholds
+(0.1, 0.2, 0.3, and 0.5 m).
+
+All 16 configurations successfully processed all ten scans,
+representing 19,766,864 point classifications, including ignored
+points.
+
+The best tested configuration by accuracy, F1 score, and ground IoU
+uses a 2.0 m cell size and a 0.2 m height threshold.
+
+| Metric | Original baseline | Best tested configuration |
+|---|---:|---:|
+| Cell size | 1.0 m | 2.0 m |
+| Height threshold | 0.3 m | 0.2 m |
+| Accuracy | 89.608% | 93.677% |
+| Ground precision | 83.279% | 90.797% |
+| Ground recall | 99.869% | 97.615% |
+| Ground F1 score | 90.823% | 94.082% |
+| Ground IoU | 83.188% | 88.826% |
+| True positives | 624,986 | 610,875 |
+| True negatives | 464,145 | 527,716 |
+| False positives | 125,491 | 61,920 |
+| False negatives | 817 | 14,928 |
+| Kernel invocations | 320 | 345 |
+| Mean kernel CPU time per scan | 3.506 ms | 1.854 ms |
+| Mean total processing time per scan | 9.149 ms | 6.162 ms |
+
+Timing values in this table are taken from the same parameter sweep.
+Classification metrics are aggregated across all evaluated points.
+Total processing time includes spatial partitioning, kernel execution,
+and metric calculation, but excludes dataset file loading.
+
+The optimized parameter configuration reduces false positives by
+50.66% and total classification errors by 39.16%. Accuracy improves
+by 4.069 percentage points, while mean total processing time decreases
+by approximately 32.6%.
+
+These improvements were achieved without modifying the classification
+kernel.
+
+#### Representative Design-Space Results
+
+| Cell (m) | Threshold (m) | Accuracy | F1 score | CPU ms/scan |
+|---:|---:|---:|---:|---:|
+| 0.25 | 0.1 | 89.835% | 90.963% | 25.623 |
+| 0.5 | 0.1 | 92.682% | 93.244% | 15.656 |
+| 1.0 | 0.1 | 93.112% | 93.387% | 9.116 |
+| 1.0 | 0.2 | 92.530% | 93.210% | 10.209 |
+| 1.0 | 0.3 | 89.608% | 90.823% | 9.149 |
+| 2.0 | 0.1 | 86.488% | 85.684% | 6.203 |
+| 2.0 | 0.2 | 93.677% | 94.082% | 6.162 |
+| 2.0 | 0.3 | 91.963% | 92.723% | 6.159 |
+
+Complete experimental results are available in:
+
+- `results/ground_classify_real_baseline.txt`
+- `results/ground_classify_real_optimized.txt`
+- `results/ground_classify_real_sweep.txt`
+
+#### Engineering Analysis
+
+Increasing the cell size generally reduces the number of unique
+cells searched by the current sequential lookup implementation,
+reducing CPU execution time. Larger cells may also reduce the
+occurrence of obstacle-only cells, although this mechanism has
+not yet been independently quantified.
+
+Increasing the height threshold improves ground recall at the
+expense of precision. Conversely, an excessively restrictive
+threshold can misclassify uneven or sloped ground as non-ground.
+
+The real-world results demonstrate that parameter selection based
+solely on synthetic data is insufficient. The best tested real-world
+configuration differs from the highest-accuracy synthetic
+configurations.
+
+The standalone baseline and optimized evaluations reproduced the
+same classification metrics as the parameter sweep. CPU timings
+varied between executions, so repeated timing trials will be needed
+for a more rigorous performance characterization.
+
+#### Implications for FPGA Acceleration
+
+For the original baseline in the real-world parameter sweep,
+approximately 38.3% of total processing time is spent executing
+the classification kernel. The remaining time is attributable to
+spatial partitioning, data preparation, metric calculation, and
+other evaluation overhead.
+
+Under Amdahl's law, infinitely accelerating only the classifier
+would provide a theoretical overall speedup of approximately
+1.62x for this measured workload, assuming all other overhead
+remains unchanged.
+
+This motivates optimization of both the FPGA kernel and the
+host-side processing pipeline. Future hardware measurements
+must also account for host-to-device and device-to-host transfers.
+
+These results are CPU measurements, not measured FPGA performance.
+
+#### Published Reference and Limitations
+
+The original GSeg3D repository reports precision of approximately
+96–99%, recall of 85–91%, F1 scores of 92–94%, and an average CPU
+runtime of approximately 48 ms per scan on SemanticKITTI.
+
+Our best tested configuration achieves an F1 score of 94.082%
+on the downloaded sample. However, differences in dataset coverage,
+hardware, ground-truth mapping, algorithm complexity, and timing
+methodology prevent a direct performance comparison.
+
+The ten evaluated scans are consecutive frames from a single
+sequence. The selected parameters have not yet been validated on
+an independent dataset. The obstacle-only cell limitation also
+remains unresolved.
+
+#### Reproducing the Real-World Evaluation
+
+Download the annotated sample:
+
+```bash
+mkdir -p datasets/semantickitti
+
+curl -fL \\
+    https://github.com/supervisely-ecosystem/demo-semantic-kitti-pointcloud-episodes-annotated/releases/download/v1.0.0/project-example.zip \\
+    -o datasets/semantickitti/project-example.zip
+
+unzip -q datasets/semantickitti/project-example.zip \\
+    -d datasets/semantickitti/
+```
+
+Compile the CPU evaluation program:
+
+```bash
+mkdir -p build_u280
+
+g++ -std=c++17 -O2 -Wall -Wextra -Wno-unknown-pragmas \\
+    test/src/ground_classify.cpp \\
+    test/testbench/ground_classify_real.cpp \\
+    -o build_u280/ground_classify_real
+```
+
+Run the original baseline:
+
+```bash
+./build_u280/ground_classify_real \\
+    datasets/semantickitti/dataset/sequences/00 \\
+    1.0 0.3
+```
+
+Run the best tested configuration:
+
+```bash
+./build_u280/ground_classify_real \\
+    datasets/semantickitti/dataset/sequences/00 \\
+    2.0 0.2
+```
+
+Reproduce the parameter sweep:
+
+```bash
+for cell in 0.25 0.5 1.0 2.0; do
+    for threshold in 0.1 0.2 0.3 0.5; do
+        echo "Cell: $cell | Threshold: $threshold"
+        ./build_u280/ground_classify_real \\
+            datasets/semantickitti/dataset/sequences/00 \\
+            "$cell" "$threshold" | grep '^TOTAL,'
+    done
+done
+```
+
+#### Dataset Attribution
+
+- [SemanticKITTI Dataset](https://semantic-kitti.org/)
+- [Supervisely Annotated SemanticKITTI Sample](https://github.com/supervisely-ecosystem/demo-semantic-kitti-pointcloud-episodes-annotated)
+- Behley et al., *SemanticKITTI: A Dataset for Semantic Scene
+  Understanding of LiDAR Sequences*, ICCV, 2019.
+- Geiger, Lenz, and Urtasun, *Are We Ready for Autonomous Driving?
+  The KITTI Vision Benchmark Suite*, CVPR, 2012.
+
+The sample is distributed under the Creative Commons
+Attribution-NonCommercial-ShareAlike 4.0 license, as stated by
+the sample distributor. Raw dataset files are excluded from this
+repository.
+
 ### Design-Space Exploration and Next Steps
 
-The current measured baseline uses `cell_size = 1.0` and `height_threshold = 0.3` in the synthetic benchmark. A controlled parameter sweep has **not** yet been performed. Planned exploration includes different cell sizes and thresholds; testing sparse and sloped terrain; comparing linear cell search with more hardware-friendly indexing; loop pipelining and memory optimization; real-world LiDAR datasets; HLS resource/latency reports; and hardware acceleration once the toolchain is available. This list is a plan, **not completed experimental evidence**.
+Algorithm-level design-space exploration has been completed for
+both synthetic and real-world LiDAR data. The experiments quantify
+the effects of grid-cell size and height threshold on classification
+accuracy, precision, recall, F1 score, and CPU execution time.
+
+The best tested real-world configuration uses a 2.0 m cell size
+and a 0.2 m height threshold, achieving 93.677% accuracy and
+a 94.082% ground F1 score on the evaluated SemanticKITTI sample.
+
+Remaining development priorities include:
+
+- Replacing sequential cell lookup with hardware-friendly indexing.
+- Exploring loop pipelining and on-chip memory optimization.
+- Improving host-side spatial partitioning and data preparation.
+- Addressing the obstacle-only cell classification limitation.
+- Validating parameter selection on independent LiDAR sequences.
+- Conducting repeated CPU timing trials.
+- Completing HLS synthesis and analyzing resource utilization,
+  latency, and initiation intervals.
+- Implementing and validating FPGA host-to-device communication.
+- Measuring FPGA kernel and end-to-end execution performance.
+- Comparing CPU and FPGA implementations using identical workloads.
+
+FPGA synthesis and hardware validation remain outstanding due to
+the documented toolchain and platform compatibility issues.
+No FPGA speedup or resource utilization claims are made at this stage.
 
 ### Team Contributions
 
