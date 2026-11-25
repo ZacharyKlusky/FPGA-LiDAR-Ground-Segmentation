@@ -480,13 +480,7 @@ No FPGA speedup or resource utilization claims are made at this stage.
 
 ### Individual Contributions
 
-Zachary Klusky developed the XY-grid classification baseline,
-deterministic CPU tests, synthetic benchmarks and obstacle-only
-failure analysis; implemented synthetic and SemanticKITTI
-parameter sweeps, dataset validation, spatial batching and
-real-data evaluation; analyzed accuracy and timing trade-offs;
-investigated the OCT toolchain and prepared Update 2
-documentation and report.
+This project is a collaborative effort between Zachary Klusky and Kevin Kuzmeski. For Project Update 2, Zachary primarily focused on the development and validation of the ground-classification algorithm, synthetic and real-world evaluation, parameter optimization, and analysis of classification accuracy and computational performance. Additional efforts included investigating the OCT development environment and preparing the project documentation. Moving forward, the primary focus of the project will be FPGA implementation, hardware validation, and architectural optimization.
 
 ### References and Software Attribution
 
