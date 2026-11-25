@@ -116,9 +116,47 @@ g++ -std=c++17 -O2 -Wno-unknown-pragmas \
 
 ### FPGA Development Status
 
-**Target hardware:** AMD Alveo U280. The CloudLab experiment detected a ready U280. The original voxel-grouping kernel has prior Vitis HLS synthesis artifacts, but the new `ground_classify` kernel has **not** been verified through HLS synthesis, emulation, or hardware execution. The expected Vitis 2023.1/2023.2 installations were unavailable at the shared configured path; attempting the available 2024.2 toolchain encountered target-device support problems. The team has requested guidance about the supported build environment.
+The target is the AMD Alveo U280, part `xcu280-fsvh2892-2L-e`.
+The earlier grouping-kernel HLS configuration specifies
+200 MHz (5 ns); this is a requested clock, not achieved
+timing for the classifier.
 
-**Outstanding:** classification-kernel HLS synthesis, hardware resource and timing reports, software/hardware emulation, U280 execution, and matched CPU-versus-FPGA comparisons. No FPGA speedup or hardware accuracy is reported.
+The classifier has HLS interface pragmas but has not
+completed HLS synthesis, co-simulation, linking or
+physical execution.
+
+The following environment was verified on November 24, 2026:
+
+| Environment item | Observed status |
+|---|---|
+| OCT node | pc155; Ubuntu 22.04.2 LTS |
+| XRT | 2023.2 / 2.16.204 |
+| U280 shell | xilinx_u280_gen3x16_xdma_base_1; ready |
+| Development platform | xilinx_u280_gen3x16_xdma_1_202211_1 |
+| Vitis / HLS | 2024.2 available; 2023.1/2023.2 not found in searched paths |
+| Vivado 2024.2 | Starts after installing libtinfo5; U280 part queries empty |
+
+The initial Vivado startup failed because `libtinfo.so.5`
+was missing. Installing `libtinfo5` resolved startup.
+A subsequent batch Tcl script executed
+`get_parts -quiet xcu280*` and
+`get_parts -quiet xcu280-fsvh2892-2L-e`;
+both returned empty results.
+
+The available 2024.2 installation therefore does not
+expose the required U280 part. Searches of the shared tool
+directories found only 2024.2 Vitis/HLS executables.
+Earlier Vivado 2023.1 device support did not provide a
+complete matching Vitis toolchain.
+
+The physical card is detected and ready, but the
+compiler/device-support issue prevents a verified
+classifier build in the current environment.
+
+No classifier FPGA resource utilization, achieved clock,
+hardware latency, throughput or speedup is claimed.
+Prior synthesis artifacts for `ground_accel` do not
+establish synthesis or execution of `ground_classify`.
 
 ### Algorithm-Level Design-Space Exploration
 
@@ -440,9 +478,15 @@ FPGA synthesis and hardware validation remain outstanding due to
 the documented toolchain and platform compatibility issues.
 No FPGA speedup or resource utilization claims are made at this stage.
 
-### Team Contributions
+### Individual Contributions
 
-This is a two-person project. Zachary Klusky worked on the new XY-grid ground-classification baseline, deterministic CPU tests, synthetic benchmarks, obstacle-only failure analysis, and Project Update 2 documentation/toolchain investigation. **Kevin Kuzmeski's exact contributions and the ownership of the original grouping/HLS work must be confirmed with Kevin before final submission.** This placeholder avoids attributing unverified work.
+Zachary Klusky developed the XY-grid classification baseline,
+deterministic CPU tests, synthetic benchmarks and obstacle-only
+failure analysis; implemented synthetic and SemanticKITTI
+parameter sweeps, dataset validation, spatial batching and
+real-data evaluation; analyzed accuracy and timing trade-offs;
+investigated the OCT toolchain and prepared Update 2
+documentation and report.
 
 ### References and Software Attribution
 
@@ -453,7 +497,11 @@ The project's `test/src/ground_accel.cpp` and `test/src/ground_classify.cpp` are
 
 ### AI-Assisted Development Disclosure
 
-AI assisted with C++ kernel development, debugging, FPGA toolchain troubleshooting, and documentation. All stated test results and CPU timings are taken from observed terminal output, not AI-estimated performance. Independent FPGA synthesis and hardware validation remain outstanding.
+ChatGPT was used to assist with C++ kernel debugging,
+evaluation code, FPGA toolchain troubleshooting, and
+reviewing this report. Code and experiments were run in
+the OCT environment, and reported test results and CPU
+timings are based on observed terminal output.
 
 ---
 

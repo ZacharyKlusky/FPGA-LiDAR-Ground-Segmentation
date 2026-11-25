@@ -20,3 +20,6 @@ _x/
 v++_*.log
 
 datasets/
+
+# Generated experimental outputs
+/results/
